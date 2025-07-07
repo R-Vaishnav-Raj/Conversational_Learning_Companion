@@ -1,0 +1,1089 @@
+{
+  "name": "Conversational Learning Companion",
+  "nodes": [
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=🧠 You are an AI agent that manages student interactions in a conversational learning assistant.\n\nYou receive the following inputs:\n\ninput_text: The message sent by the user via Telegram\n\nmessage_type: One of \"answer\", \"quiz_request\", or \"general_question\" (classified by a previous agent)\n\nsession: The user session fetched from Supabase using get_user_session\n\nuser_id, user_name, and updated_at: Standard metadata\n\ninput_text: {{ $('Telegram Trigger').item.json.message.text }}\n\nmessage_type:{{ $json.output }}\n\nuser_id:{{ $('Telegram Trigger').item.json.message.chat.id }}\n\n🧪 If message_type === \"answer\":\nThe user is responding to a quiz question.\n\nExtract quiz_progress.current_question from session.\n\nCheck if the input_text correctly answers that question.\n\nReply to the user using send_telegram_message:\n\n{\n  \"chat_id\": user_id,\n  \"text\": \"<Your feedback (correct/incorrect) + explanation>\"\n}\nUpdate the session using save_user_session:\n\n{\n  \"user_name\": user_name,\n  \"last_topic\": session.last_topic,\n  \"quiz_progress\": {\n    \"score\": <updated_score>,\n    \"current_question\": null\n  },\n  \"awaiting_answer\": false,\n  \"schedule_plan\": session.schedule_plan,\n  \"updated_at\": updated_at\n}\nIf message_type === \"general_question\":\nThe user has asked an academic or casual question.\n\nAnswer it naturally and helpfully.\n\nIf the topic appears different from session.last_topic, call update_last_topic:\n\n{\n  \"user_id\": user_id,\n  \"last_topic\": \"<new inferred topic>\"\n}\nSend the answer using send_telegram_message:\n\n{\n  \"chat_id\": user_id,\n  \"text\": \"<Your helpful answer>\"\n}\nIf message_type === \"quiz_request\":\nThe user is requesting a quiz.\n\nIf input_text contains a topic (e.g., \"quiz me on biology\"):\n\nExtract that topic.\n\nCall update_last_topic with:\n\n{\n  \"user_id\": user_id,\n  \"last_topic\": \"<extracted topic>\"\n}\nIf no topic is mentioned, use session.last_topic as the quiz topic.\n\nGenerate a relevant question from the topic.\n\nSave quiz state using save_user_session:\n\n{\n  \"user_name\": user_name,\n  \"last_topic\": \"<quiz topic>\",\n  \"quiz_progress\": {\n    \"score\": session.quiz_progress.score,\n    \"current_question\": \"<generated question>\"\n  },\n  \"awaiting_answer\": true,\n  \"schedule_plan\": session.schedule_plan,\n  \"updated_at\": updated_at\n}\nSend the quiz question to the user:\n\n{\n  \"chat_id\": user_id,\n  \"text\": \"<generated question>\"\n}\n✅ Rule\n\nYou will receive session as a JSON object directly (not as a wrapped result array).\n\nYou MUST use only one tool call per output.\n\nAll output to the user must be done using send_telegram_message.\n\nDo not return or display raw JSON to the user.\n\nAll timestamps must be in ISO 8601 format.\nthe output of this node should be the text send to the user\n",
+        "options": {
+          "systemMessage": "="
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2,
+      "position": [
+        220,
+        -420
+      ],
+      "id": "0cd4ad08-4a94-41e9-8a48-c09cd9007aac",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        220,
+        -260
+      ],
+      "id": "be0028b7-e211-44d3-b471-3755f3c20002",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "AH613ePJrsO28oHk",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an AI agent that manages conversational learning sessions using the MCP server and Supabase.\n\nYou receive the following values from the previous node:\n- user_id: {{ $('Telegram Trigger').item.json.message.chat.id }}\n- user_name: {{ $('Telegram Trigger').item.json.message.chat.first_name }}\n- input_text: {{ $('Telegram Trigger').item.json.message.text }}\n- updated_at: {{ $now.toISO() }}\n\nFor every message, follow this process:\n\n---\n\n🧠 Step 1: Always fetch or create user session\n\n1. Call the tool `get_user_session` with:\n{\n  \"user_id\": user_id\n}\n\n2. If the tool returns an empty result, create a session using `add_user_session`. Use:\n{\n  \"user_id\": user_id,\n  \"user_name\": user_name,\n  \"last_topic\": \"<relevant topic from input_text>\",\n  \"quiz_progress\": {\n    \"chapter\": 1,\n    \"score\": 0,\n    \"questions_asked\": []\n  },\n  \"awaiting_answer\": false,\n  \"schedule_plan\": {\n    \"Day 1\": \"Intro Topic\",\n    \"Day 2\": \"Next Topic\"\n  },\n  \"updated_at\": updated_at\n}\n\n---\n\n🎥 Step 2: If the user is asking for a video\n\nIf the input_text clearly asks for a video (e.g., \"show me a video on...\", \"any YouTube video about...\"):\n\n1. Extract the topic from input_text  \n2. Call `search_youtube_videos` with:\n{\n  \"topic\": \"<extracted_topic>\"\n}\n\n3. Once you receive the tool response, extract from each result:\n   - `id.videoId`\n   - `snippet.title`\n\n4. Construct YouTube links as:\n   - `[📺 <title>](https://www.youtube.com/watch?v=<videoId>)`\nThere will be a total of youtube videos fetched by the search_youtube_videos. hence give 3 videos links as the output\n\n5. Then:\n   - Respond to the user with the links in a friendly message.\n   - Update the Supabase session using `save_user_session`, setting:\n     - `last_topic` to the topic searched\n     - `updated_at` to current timestamp\n     - keep other session values unchanged or updated if needed\n\nExample save_user_session tool call:\n{\n  \"user_name\": user_name,\n  \"last_topic\": \"<extracted_topic>\",\n  \"quiz_progress\": { ... },  // (use existing or default values)\n  \"awaiting_answer\": false,\n  \"schedule_plan\": { ... },\n  \"updated_at\": updated_at\n}\n\n✅ Call `search_youtube_videos` first, and only after that call `save_user_session`.\n✅ Always return only one tool call at a time.\n\n---\n\n💬 Step 3: If the message is not a video request\n\n- Use the session data to answer questions or quiz the user.\n- Track quiz progress or any changes to their study plan.\n- Call `save_user_session` to persist the updates.\n\n---\nUse the send_message_telegram to send message to the user through telegram\n⚠️ Important Rules:\n- All timestamps must be ISO 8601.\n- Only one tool call per output.\n- No extra comments or text outside JSON when calling tools.\n- Use valid JSON structure exactly as defined by the tool schema.\n\nthe output of this agent should be the text send to the user\n",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2,
+      "position": [
+        180,
+        -760
+      ],
+      "id": "a1293ad3-2bd8-4085-bea5-ffe19d4d6863",
+      "name": "AI Agent1"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        -580
+      ],
+      "id": "2def1d1d-f72b-49d4-a90d-11c87a1fe53b",
+      "name": "OpenAI Chat Model1",
+      "credentials": {
+        "openAiApi": {
+          "id": "AH613ePJrsO28oHk",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sseEndpoint": "https://inspired-bison-generally.ngrok-free.app/mcp/mcp/sse"
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1,
+      "position": [
+        340,
+        -580
+      ],
+      "id": "f5e08d1d-823b-4a07-91c5-92d94d98019d",
+      "name": "MCP Client1"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an AI classifier that identifies the type of message a user has sent.\nYou should not never call the send_message_user tool.\nYou receive the following inputs:\n- user_id: {{ $json.message.chat.id }}\n- user_name: {{ $json.message.chat.first_name }}\n- input_text: {{ $json.message.text }}\n\nYour task:\n1. First, call the `get_user_session` tool using:\n{\n  \"user_id\": user_id\n}\n\n2. If no session exists (i.e., tools.get_user_session.result.length === 0):\n   - Respond with: new_user\n   - Do NOT call any other tools.\n\nOnce a session is found:\n\n3. Classify the `input_text` as one of the following types:\n\n- If the message includes phrases like “quiz me”, “test me”, “ask me a question about...” → respond with: `quiz_request`\n\n- If the session.awaiting_answer === true → respond with: `answer`\n\n- If the message asks for a video (e.g., “show me a video on...”, “YouTube video about...”) → respond with: `video_request`\n\n-If input includes phrases like:\n\n“Plan my study…”\n\n“Make me a study plan…”\n\n“Create a schedule for…”\n\nrespond with message_type = \"study_plan_request\"\n- If it’s any other academic or casual message → respond with: `general_question`\n\n⚠️ Output Rules:\n- ❗Return only one of the following as **plain text** (no JSON, no formatting, no quotes):\n  `new_user`, `quiz_request`, `answer`, `video_request`, `general_question`\n- Do not return any additional text.\n",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2,
+      "position": [
+        -440,
+        -420
+      ],
+      "id": "8376cd8f-3150-4ffa-8eb5-6a21b2e13f91",
+      "name": "AI Agent3"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        -440,
+        -220
+      ],
+      "id": "3f745a49-e167-40de-9fb2-9af3c77aba11",
+      "name": "OpenAI Chat Model3",
+      "credentials": {
+        "openAiApi": {
+          "id": "AH613ePJrsO28oHk",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sseEndpoint": "https://inspired-bison-generally.ngrok-free.app/mcp/mcp/sse"
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        -220
+      ],
+      "id": "939e69e1-1c0b-443e-9e22-8f24eb84bdc9",
+      "name": "MCP Client3"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.output }}",
+                    "rightValue": "general_question",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "cd6a74af-53c3-439f-a5fd-c26f10cc45e4"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "bd6343db-b89c-4c23-a8c9-4fd620a009c0",
+                    "leftValue": "={{ $json.output }}",
+                    "rightValue": "video_request",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "53199478-c5ff-4cf8-8575-1060d69dca47",
+                    "leftValue": "={{ $json.output }}",
+                    "rightValue": "quiz_request",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "4e7d7e46-3c87-4808-8a9b-8356d171b980",
+                    "leftValue": "={{ $json.output }}",
+                    "rightValue": "answer",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "b53e4fda-3a49-40c1-931a-169e3f2f9921",
+                    "leftValue": "={{ $json.output }}",
+                    "rightValue": "study_plan_request",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -80,
+        -460
+      ],
+      "id": "f86132cf-9d4d-4beb-b8e8-a353e637f8aa",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "sseEndpoint": "https://inspired-bison-generally.ngrok-free.app/mcp/mcp/sse"
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1,
+      "position": [
+        400,
+        -260
+      ],
+      "id": "f2dbbb52-3347-4b1f-a36f-be5ad3f9ac23",
+      "name": "MCP Client"
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Telegram Trigger').item.json.message.text }}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        -340,
+        -220
+      ],
+      "id": "c9584fa3-2718-4e25-8b34-973a1b44205e",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1160,
+        -420
+      ],
+      "id": "09695104-2be1-4f42-9311-a0c1c0e11f31",
+      "name": "Telegram Trigger",
+      "webhookId": "22edb32a-98b8-42e4-9fc5-7af7bb6836fe",
+      "credentials": {
+        "telegramApi": {
+          "id": "IiyWZsvdxlT9Scpm",
+          "name": "Learning Companion Telegram "
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Study Plan AI Agent Instructions\nOverview\nYou are an AI agent that creates personalized study plans, saves them to Supabase, creates calendar events, and sends confirmation messages via Telegram.\nInputs\n\ninput_text: {{ $('Telegram Trigger').item.json.message.text }}\nuser_id: {{ $('Telegram Trigger').item.json.message.chat.id }}\nuser_name: {{ $('Telegram Trigger').item.json.message.chat.first_name }}\nsession: User session data from Supabase\nupdated_at: {{ $now.toISO() }}\n\nProcess Flow\nStep 1: Extract Topic and Duration\nParse input_text to identify:\n\nTopic: Subject to study (e.g., \"Algebra\", \"Biology\")\nDuration: Number of days (e.g., \"7 days\", \"2 weeks\")\n\nFallback Logic:\n\nIf no topic found → Use session.last_topic\nIf no duration found → Default to 7 days\n\nStep 2: Create Study Plan Structure\nDivide the topic into daily subtopics:\nDay 1: Introduction to [Topic]\nDay 2: Core Concepts\nDay 3: Advanced Topics\nDay 4: Practice Problems\nDay 5: Review and Assessment\n...\nStep 3: Save to Database FIRST\nBefore any other actions, call save_user_session with:\njson{\n  \"user_id\": user_id,\n  \"user_name\": \"user_name\",\n  \"last_topic\": \"[extracted_topic]\",\n  \"schedule_plan\": {\n    \"Day 1\": \"[subtopic_1]\",\n    \"Day 2\": \"[subtopic_2]\",\n    \"Day 3\": \"[subtopic_3]\"\n  },\n  \"updated_at\": \"updated_at\"\n}\nWait for database confirmation before proceeding.\nStep 4: Create Calendar Events\nFor each day in the plan, call Create_calendar_event:\njson{\n  \"description\":  \"Study: [Topic] Day [X] — user_id: user_id\",\n  \"start_time\": \"[YYYY-MM-DDTHH:mm:ss]\",\n  \"end_time\": \"[YYYY-MM-DDTHH:mm:ss]\",\n  \"user_id\": \"user_id\"\n}\nImportant Calendar Rules:\n\nInclude user_id in both summary AND description\nSet realistic study times (e.g., 1-2 hours per session)\nSchedule events for consecutive days starting tomorrow\nDefault time: 10:00 AM - 12:00 PM (adjustable based on user preference)\n\nStep 5: Send Confirmation Message\nOnly after database and calendar operations are complete, call send_telegram_message:\njson{\n  \"chat_id\": \"user_id\",\n  \"message\": \"✅ I've created your [X]-day study plan for [Topic]!\\n\\n📅 Calendar events added:\\nDay 1: [subtopic_1]\\nDay 2: [subtopic_2]\\nDay 3: [subtopic_3]\\n...\\n\\n⏰ Daily study time: 10:00 AM - 12:00 PM\\n\\nGood luck with your studies! 📚\"\n}\nCritical Rules\n🚫 Prevent Duplicate Messages\n\nOnly call send_telegram_message ONCE at the very end\nDo not send intermediate status messages\nWait for all operations to complete before messaging\n\n🔄 Error Handling\nIf any step fails:\n\nLog the error\nSend a single error message: \"❌ Sorry, I couldn't create your study plan. Please try again.\"\nDo not proceed with remaining steps\n\n📊 Database Requirements\n\nAlways include user_id as primary identifier\nUse consistent field names in JSON\nInclude updated_at timestamp\nVerify save operation before proceeding\n\n📅 Calendar Requirements\n\nEach event must contain user_id for tracking\nUse consistent naming format\nSet appropriate start/end times\nInclude meaningful descriptions\n\nExample Complete Flow\n\nInput: \"I want to study Python for 5 days\"\nExtract: Topic = \"Python\", Duration = 5 days\nSave to DB: Store plan with 5 daily subtopics\nCreate Events: 5 calendar events for consecutive days\nSend Message: Single confirmation with complete plan\n\nValidation Checklist\n\n Topic and duration correctly extracted\n Database save operation completed successfully\n All calendar events created with user_id\n Single confirmation message sent\n No duplicate operations performed\n\nResponse Format\nAlways respond with structured JSON for tool calls, never plain text responses that might trigger additional message sends.\n\nthe final output of this agent should be the text send to the user",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2,
+      "position": [
+        220,
+        -120
+      ],
+      "id": "a54d033a-d2f6-40ec-84f8-392cf83959fe",
+      "name": "AI Agent4"
+    },
+    {
+      "parameters": {
+        "sseEndpoint": "https://inspired-bison-generally.ngrok-free.app/mcp/mcp/sse"
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1,
+      "position": [
+        400,
+        60
+      ],
+      "id": "b4ffcd12-7328-4383-addb-dd3a46cc8989",
+      "name": "MCP Client4"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        220,
+        60
+      ],
+      "id": "57724d1c-4dd5-4f76-8349-301cc1e9d5d2",
+      "name": "OpenAI Chat Model4",
+      "credentials": {
+        "openAiApi": {
+          "id": "AH613ePJrsO28oHk",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "speech",
+        "voice": {
+          "__rl": true,
+          "value": "29vD33N1CtxCmqQRPOHJ",
+          "mode": "list",
+          "cachedResultName": "Drew"
+        },
+        "text": "={{ $json.output }}",
+        "additionalOptions": {},
+        "requestOptions": {}
+      },
+      "type": "@elevenlabs/n8n-nodes-elevenlabs.elevenLabs",
+      "typeVersion": 1,
+      "position": [
+        600,
+        -420
+      ],
+      "id": "cf16b5be-80cb-495c-a851-19668592bd3d",
+      "name": "ElevenLabs",
+      "credentials": {
+        "elevenLabsApi": {
+          "id": "D7jQpvCMkcTbQa6l",
+          "name": "ElevenLabs account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "sendAudio",
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "binaryData": true,
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        780,
+        -420
+      ],
+      "id": "dc764fb1-b131-4912-a468-9af0b4472778",
+      "name": "Telegram1",
+      "webhookId": "bf510127-7da2-473c-8662-1e85f1b81c7a",
+      "credentials": {
+        "telegramApi": {
+          "id": "IiyWZsvdxlT9Scpm",
+          "name": "Learning Companion Telegram "
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get the incoming text\nconst input = $json[\"output\"] || \"\";\n\n// This regex removes all URLs (http or https)\nconst output = input.replace(/https?:\\/\\/\\S+/g, \"\").trim();\n\n// Optionally: also remove extra whitespace or line breaks if you want\nconst cleaned = output.replace(/\\s{2,}/g, \" \").replace(/\\n+/g, \"\\n\").trim();\n\n// Return it\nreturn [\n  {\n    json: {\n      output: cleaned\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        -760
+      ],
+      "id": "9129b916-f6d2-41e9-a456-fb494d50282b",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ccba6246-805b-431d-bb60-6910f75c4dec",
+              "leftValue": "={{ $json.message.text }}",
+              "rightValue": "/start",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -940,
+        -420
+      ],
+      "id": "fb0f0611-b795-4339-967d-e8eb4fa821db",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "Hi, This is your learning Companion. Ask me doubts, youtube videos, to prepare a schedule for studying or ask me to quiz you",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -500,
+        -680
+      ],
+      "id": "95e5ecc2-b353-46c6-91af-a61dc5706d68",
+      "name": "Telegram",
+      "webhookId": "b9fba362-7154-4fef-9bbf-34c705aeded7",
+      "credentials": {
+        "telegramApi": {
+          "id": "IiyWZsvdxlT9Scpm",
+          "name": "Learning Companion Telegram "
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "speech",
+        "voice": {
+          "__rl": true,
+          "value": "29vD33N1CtxCmqQRPOHJ",
+          "mode": "list",
+          "cachedResultName": "Drew"
+        },
+        "text": "={{ $json.result.text }}",
+        "additionalOptions": {},
+        "requestOptions": {}
+      },
+      "type": "@elevenlabs/n8n-nodes-elevenlabs.elevenLabs",
+      "typeVersion": 1,
+      "position": [
+        -300,
+        -680
+      ],
+      "id": "9a1a13bd-bd92-49ef-b08a-2f140d45229d",
+      "name": "ElevenLabs1",
+      "credentials": {
+        "elevenLabsApi": {
+          "id": "D7jQpvCMkcTbQa6l",
+          "name": "ElevenLabs account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "sendAudio",
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "binaryData": true,
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -120,
+        -680
+      ],
+      "id": "fd396fc3-f6d7-4258-b138-2a596fa7cb52",
+      "name": "Telegram2",
+      "webhookId": "bf510127-7da2-473c-8662-1e85f1b81c7a",
+      "credentials": {
+        "telegramApi": {
+          "id": "IiyWZsvdxlT9Scpm",
+          "name": "Learning Companion Telegram "
+        }
+      }
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyHour"
+            }
+          ]
+        },
+        "calendarId": {
+          "__rl": true,
+          "value": "8b3b7bb039bd71882f172060338e66159f655bd077d77fcef056fb502072da85@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "Student reminder"
+        },
+        "triggerOn": "eventStarted",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendarTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1220,
+        80
+      ],
+      "id": "7f066bbf-79f6-42aa-8ba6-539cc89fe80f",
+      "name": "Google Calendar Trigger",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "0aUV3LJREJHWRtZo",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "speech",
+        "voice": {
+          "__rl": true,
+          "value": "29vD33N1CtxCmqQRPOHJ",
+          "mode": "list",
+          "cachedResultName": "Drew"
+        },
+        "text": "={{ $json.text }}",
+        "additionalOptions": {},
+        "requestOptions": {}
+      },
+      "type": "@elevenlabs/n8n-nodes-elevenlabs.elevenLabs",
+      "typeVersion": 1,
+      "position": [
+        -480,
+        240
+      ],
+      "id": "5474d216-de89-47e9-b99f-770784b90957",
+      "name": "ElevenLabs2",
+      "credentials": {
+        "elevenLabsApi": {
+          "id": "D7jQpvCMkcTbQa6l",
+          "name": "ElevenLabs account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=this is description of the event\n {{ $json.description }}\nfrom this extarct the topic and user id\nthis message in the format Study: [TOPIC] Day X - user_id: [user_id]\npreapare a friendly reminder based on the output like \n- 📌 It’s time to study *<topic>*! Here’s your quick recap — let’s stay on track! 💪\n\n\n\nthe output of this model should the \n{\n  text:<friendly reminder>\n  user_id: user_id\n}\ndon't give anything else"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        -1000,
+        80
+      ],
+      "id": "0a806930-2686-4437-b267-399de47dec75",
+      "name": "OpenAI",
+      "credentials": {
+        "openAiApi": {
+          "id": "AH613ePJrsO28oHk",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Incoming string:\nconst input = $input.first().json.message.content;  // Replace 'output' with your actual field\n\n// Parse it — since it’s JSON:\nconst data = JSON.parse(input);\n\n// Return both values separately:\nreturn [\n  {\n    json: {\n      text: data.text,\n      user_id: data.user_id\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        80
+      ],
+      "id": "0a04ad22-6157-4a3c-8517-7dc890cb4d63",
+      "name": "Code1"
+    },
+    {
+      "parameters": {
+        "operation": "sendAudio",
+        "chatId": "={{ $('Code1').item.json.user_id }}",
+        "binaryData": true,
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -240,
+        240
+      ],
+      "id": "04de7269-eaaf-4728-99d8-2054597ad8d2",
+      "name": "Telegram3",
+      "webhookId": "bf510127-7da2-473c-8662-1e85f1b81c7a",
+      "credentials": {
+        "telegramApi": {
+          "id": "IiyWZsvdxlT9Scpm",
+          "name": "Learning Companion Telegram "
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.user_id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -460,
+        -20
+      ],
+      "id": "b4f89d30-5a71-4034-b78d-2d86936bfd6a",
+      "name": "Telegram4",
+      "webhookId": "b9fba362-7154-4fef-9bbf-34c705aeded7",
+      "credentials": {
+        "telegramApi": {
+          "id": "IiyWZsvdxlT9Scpm",
+          "name": "Learning Companion Telegram "
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "user_sessions",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "user_id",
+              "fieldValue": "={{ $('Telegram Trigger').item.json.message.chat.id }}"
+            },
+            {
+              "fieldId": "user_name",
+              "fieldValue": "={{ $('Telegram Trigger').item.json.message.chat.first_name }}"
+            },
+            {
+              "fieldId": "last_topic",
+              "fieldValue": "null"
+            },
+            {
+              "fieldId": "quiz_progress",
+              "fieldValue": "null"
+            },
+            {
+              "fieldId": "awaiting_answer",
+              "fieldValue": "FALSE"
+            },
+            {
+              "fieldId": "schedule_plan",
+              "fieldValue": "null"
+            },
+            {
+              "fieldId": "updated_at",
+              "fieldValue": "={{ $now.toISO() }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -720,
+        -520
+      ],
+      "id": "3825b1ad-4787-46a6-83ca-c8eb2832f9dc",
+      "name": "Supabase",
+      "credentials": {
+        "supabaseApi": {
+          "id": "vr0GdB9NgfQHAofH",
+          "name": "learning_companion"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP Client1": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent1": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "ElevenLabs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model3": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent3",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP Client3": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent3",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent3": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Agent1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Agent4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP Client": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent3",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP Client4": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent4",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model4": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent4",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ElevenLabs": {
+      "main": [
+        [
+          {
+            "node": "Telegram1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent4": {
+      "main": [
+        [
+          {
+            "node": "ElevenLabs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "ElevenLabs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Agent3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ElevenLabs1": {
+      "main": [
+        [
+          {
+            "node": "Telegram2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram": {
+      "main": [
+        [
+          {
+            "node": "ElevenLabs1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Calendar Trigger": {
+      "main": [
+        [
+          {
+            "node": "OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Code1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ElevenLabs2": {
+      "main": [
+        [
+          {
+            "node": "Telegram3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code1": {
+      "main": [
+        [
+          {
+            "node": "ElevenLabs2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Telegram4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase": {
+      "main": [
+        [
+          {
+            "node": "Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "3bc61512-f474-4834-a315-a18c3cfb4ac0",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8004a49843c5f6ffd2f1c6d98023fb3bab0d4256c07b804b76c09f8213d907d4"
+  },
+  "id": "FoCZLIUyVruw285P",
+  "tags": []
+}
