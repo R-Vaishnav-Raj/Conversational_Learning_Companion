@@ -10,7 +10,6 @@
 The **Conversational Learning Companion** is an advanced **multi-agent orchestration workflow** built in **n8n**.  
 It acts as an AI-powered study assistant for students — helping them ask questions, take quizzes, create personalized study plans, and receive reminders — all through **Telegram**, **Google Calendar**, **Supabase**, and the **MCP Server**.
 
-**✅ Note:** This is *not* a RAG (Retrieval-Augmented Generation) pipeline. It uses smart agents, session management, and dynamic generation — but does not perform vector-based document retrieval.
 
 ---
 
